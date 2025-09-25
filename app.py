@@ -28,7 +28,8 @@ st.caption("Interactive demo of your FYP: clustering + classification on mixed-t
 about_tab, data_tab, cluster_tab, model_tab, export_tab = st.tabs(["About", "Data", "Clustering", "Modeling", "Export"])
 
 with about_tab:
-    st.markdown(\"\"\"
+    st.markdown("""
+
 ### Project Overview
 Problem - Traditional recommenders struggle with context, sparsity, and cold-starts.  
 Objective - Build a pipeline that segments users (clustering) and predicts intent (classification).  
@@ -42,7 +43,7 @@ Workflow
 5) Train models and evaluate (Accuracy, Precision, Recall, F1, Confusion Matrix)
 
 Tip: On Streamlit Cloud, keep large/private datasets out of the repo. Let users upload at runtime.
-\"\"\")
+""")
 
 with st.sidebar:
     st.header("Settings")

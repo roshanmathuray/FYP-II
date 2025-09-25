@@ -29,11 +29,8 @@ st.write("Files in current directory:", os.listdir("."))
 # -----------------------------
 # Load dataset automatically
 # -----------------------------
-DATA_FILE_CANDIDATES = [
-    "online_shoppers_intention.xlsx",
-    "OnlineShoppersIntention.xlsx",
-    "online_shoppers_intention.csv"
-]
+df = pd.read_excel("online_shoppers_intention.xlsx")
+used_name = "online_shoppers_intention.xlsx"
 
 @st.cache_data
 def load_local_dataset():

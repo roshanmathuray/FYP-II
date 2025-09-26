@@ -1,4 +1,3 @@
-
 import os
 import numpy as np
 import pandas as pd
@@ -23,7 +22,7 @@ st.set_page_config(page_title="Smart Recommendations - Streamlit", layout="wide"
 st.title("Smart Recommendations - Streamlit")
 st.caption("Auto-loads local dataset and shows results immediately.")
 
-# Show files for sanity
+# Optional: list files to confirm dataset is present
 st.write("Files in current directory:", os.listdir("."))
 
 # -------- Load dataset (Excel preferred, CSV fallback) --------
@@ -33,7 +32,7 @@ DATA_CSV  = "online_shoppers_intention.csv"
 @st.cache_data
 def load_dataset():
     if os.path.exists(DATA_XLSX):
-        # Explicit engine ensures Streamlit Cloud installs openpyxl matching our requirements
+        # Explicit engine ensures Streamlit Cloud uses openpyxl
         df = pd.read_excel(DATA_XLSX, engine="openpyxl")
         return df, DATA_XLSX
     elif os.path.exists(DATA_CSV):
@@ -70,6 +69,18 @@ num_cols = list(X.select_dtypes(include=["number"]).columns)
 st.write(f"Categorical columns: {cat_cols if cat_cols else 'None'}")
 st.write(f"Numeric columns: {num_cols if num_cols else 'None'}")
 
+# ---- Helper: One-Hot + numeric matrix for KMeans/Elbow (works even if K-Prototypes is used)
+def build_kmeans_matrix(X_in, cat_cols_in, num_cols_in):
+    if len(cat_cols_in) > 0:
+        ohe = OneHotEncoder(sparse=False, handle_unknown="ignore")
+        X_ohe = ohe.fit_transform(X_in[cat_cols_in].astype(str))
+        X_ohe_df = pd.DataFrame(X_ohe, columns=ohe.get_feature_names_out(cat_cols_in), index=X_in.index)
+        X_km_mat = pd.concat([X_ohe_df, X_in[num_cols_in]], axis=1)
+    else:
+        X_km_mat = X_in[num_cols_in].copy()
+    return X_km_mat
+
+# Label-encode categoricals for supervised models
 X_enc = X.copy()
 label_maps = {}
 for c in cat_cols:
@@ -77,6 +88,7 @@ for c in cat_cols:
     X_enc[c] = le.fit_transform(X_enc[c].astype(str))
     label_maps[c] = dict(zip(le.classes_, le.transform(le.classes_)))
 
+# Scale numerics if selected
 if scale_choice == "StandardScaler":
     scaler = StandardScaler()
     X_enc[num_cols] = scaler.fit_transform(X_enc[num_cols])
@@ -96,28 +108,68 @@ if HAS_KPROTOTYPES and len(cat_cols) > 0:
     clusters = kproto.fit_predict(X_for_kproto.to_numpy(), categorical=categorical_idx)
 else:
     st.caption("Using KMeans on One-Hot encoded features (fallback).")
-    if len(cat_cols) > 0:
-        ohe = OneHotEncoder(sparse=False, handle_unknown="ignore")
-        X_ohe = ohe.fit_transform(X[cat_cols].astype(str))
-        X_ohe_df = pd.DataFrame(X_ohe, columns=ohe.get_feature_names_out(cat_cols), index=X.index)
-        X_km = pd.concat([X_ohe_df, X[num_cols]], axis=1)
-    else:
-        X_km = X[num_cols].copy()
+    X_km_mat_for_run = build_kmeans_matrix(X, cat_cols, num_cols)
     kmeans = KMeans(n_clusters=n_clusters, n_init=10, random_state=int(random_state))
-    clusters = kmeans.fit_predict(X_km)
+    clusters = kmeans.fit_predict(X_km_mat_for_run)
 
 df_clusters = df.copy()
 df_clusters["Cluster"] = clusters
 st.dataframe(df_clusters.head())
 
-# PCA plot
+# PCA plot for clusters (on encoded/scaled features for visualization)
 st.markdown("**Clusters (PCA 2D projection)**")
 pca = PCA(n_components=2, random_state=int(random_state))
 X_vis = pca.fit_transform(X_enc)
 fig, ax = plt.subplots()
 ax.scatter(X_vis[:,0], X_vis[:,1], c=clusters, alpha=0.7)
-ax.set_xlabel("PC1"); ax.set_ylabel("PC2"); ax.set_title("Clusters (PCA projection)")
+ax.set_xlabel("PC1")
+ax.set_ylabel("PC2")
+ax.set_title("Clusters (PCA projection)")
 st.pyplot(fig)
+
+# ---------------- Elbow Graph (KMeans WCSS vs K) ----------------
+st.markdown("**Elbow Graph (WCSS vs K)**")
+X_km_mat = build_kmeans_matrix(X, cat_cols, num_cols)
+
+wcss = []
+K_range = range(2, 11)  # K = 2..10
+for k in K_range:
+    km_tmp = KMeans(n_clusters=k, n_init=10, random_state=int(random_state))
+    km_tmp.fit(X_km_mat)
+    wcss.append(km_tmp.inertia_)
+
+fig_elbow, ax_elbow = plt.subplots()
+ax_elbow.plot(list(K_range), wcss, marker="o")
+ax_elbow.set_xlabel("Number of clusters (K)")
+ax_elbow.set_ylabel("WCSS (inertia)")
+ax_elbow.set_title("Elbow Method for KMeans")
+st.pyplot(fig_elbow)
+
+# ---------------- Revenue Graphs ----------------
+if "Revenue" in df.columns:
+    st.subheader("Revenue Graphs")
+
+    # (a) Overall Revenue distribution
+    st.markdown("**Overall Revenue Distribution**")
+    rev_counts = df["Revenue"].value_counts().sort_index()
+    fig_rev, ax_rev = plt.subplots()
+    ax_rev.bar(rev_counts.index.astype(str), rev_counts.values)
+    ax_rev.set_xlabel("Revenue (0 = No, 1 = Yes)")
+    ax_rev.set_ylabel("Count")
+    ax_rev.set_title("Revenue Class Counts")
+    st.pyplot(fig_rev)
+
+    # (b) Revenue rate by cluster (mean of Revenue within each cluster)
+    st.markdown("**Revenue Rate by Cluster**")
+    rev_by_cluster = df_clusters.groupby("Cluster")["Revenue"].mean()
+    fig_rc, ax_rc = plt.subplots()
+    ax_rc.bar(rev_by_cluster.index.astype(str), rev_by_cluster.values)
+    ax_rc.set_xlabel("Cluster")
+    ax_rc.set_ylabel("Revenue Rate")
+    ax_rc.set_title("Average Revenue (Purchase Intention) by Cluster")
+    st.pyplot(fig_rc)
+else:
+    st.info("Column 'Revenue' not found, so revenue graphs are skipped. Set the correct target column name above if needed.")
 
 # -------- Models --------
 st.subheader("Modeling & Evaluation")
@@ -127,6 +179,8 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 results = {}
+
+# Logistic Regression
 lr = LogisticRegression(max_iter=200)
 lr.fit(X_train, y_train)
 y_pred = lr.predict(X_test)
@@ -136,8 +190,10 @@ results["Logistic Regression"] = {
     "recall": recall_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
     "f1": f1_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
     "cm": confusion_matrix(y_test, y_pred),
+    "report": classification_report(y_test, y_pred, zero_division=0, output_dict=False),
 }
 
+# Random Forest
 rf = RandomForestClassifier(n_estimators=200, random_state=int(random_state))
 rf.fit(X_train, y_train)
 y_pred = rf.predict(X_test)
@@ -147,8 +203,10 @@ results["Random Forest"] = {
     "recall": recall_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
     "f1": f1_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
     "cm": confusion_matrix(y_test, y_pred),
+    "report": classification_report(y_test, y_pred, zero_division=0, output_dict=False),
 }
 
+# Gradient Boosting
 gb = GradientBoostingClassifier(random_state=int(random_state))
 gb.fit(X_train, y_train)
 y_pred = gb.predict(X_test)
@@ -158,19 +216,25 @@ results["Gradient Boosting"] = {
     "recall": recall_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
     "f1": f1_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
     "cm": confusion_matrix(y_test, y_pred),
+    "report": classification_report(y_test, y_pred, zero_division=0, output_dict=False),
 }
 
-# Summary
-summary_df = pd.DataFrame([[k, v["accuracy"], v["precision"], v["recall"], v["f1"]] for k,v in results.items()],
-                          columns=["Model","Accuracy","Precision","Recall","F1"])
-st.dataframe(summary_df.style.format({"Accuracy":"{:.3f}","Precision":"{:.3f}","Recall":"{:.3f}","F1":"{:.3f}"}))
+# Summary table and accuracy bar
+st.subheader("Accuracy Results")
+summary_df = pd.DataFrame(
+    [[k, v["accuracy"], v["precision"], v["recall"], v["f1"]] for k, v in results.items()],
+    columns=["Model", "Accuracy", "Precision", "Recall", "F1"]
+)
+st.dataframe(summary_df.style.format({"Accuracy": "{:.3f}", "Precision": "{:.3f}", "Recall": "{:.3f}", "F1": "{:.3f}"}))
 
 fig2, ax2 = plt.subplots()
 ax2.bar(summary_df["Model"], summary_df["Accuracy"])
-ax2.set_ylim(0,1); ax2.set_ylabel("Accuracy"); ax2.set_title("Model Accuracy Comparison")
+ax2.set_ylim(0, 1)
+ax2.set_ylabel("Accuracy")
+ax2.set_title("Model Accuracy Comparison")
 st.pyplot(fig2)
 
-# CMs
+# Confusion matrices
 st.markdown("**Confusion Matrices**")
 cols = st.columns(len(results))
 for (name, r), col in zip(results.items(), cols):
@@ -179,11 +243,12 @@ for (name, r), col in zip(results.items(), cols):
         fig_cm, ax_cm = plt.subplots()
         ax_cm.imshow(cm, interpolation="nearest")
         ax_cm.set_title(name)
-        ax_cm.set_xlabel("Predicted"); ax_cm.set_ylabel("True")
+        ax_cm.set_xlabel("Predicted")
+        ax_cm.set_ylabel("True")
         for (i, j), v in np.ndenumerate(cm):
             ax_cm.text(j, i, str(v), ha="center", va="center")
         st.pyplot(fig_cm)
 
-# Export
+# Export clustered data
 csv = df_clusters.to_csv(index=False).encode("utf-8")
 st.download_button("Download clustered data as CSV", csv, file_name="clustered_data.csv", mime="text/csv")

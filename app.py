@@ -5,8 +5,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, MinMaxScaler
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
@@ -18,8 +17,8 @@ try:
 except Exception:
     HAS_KPROTOTYPES = False
 
-st.set_page_config(page_title="Smart Recommendations - Streamlit", layout="wide")
-st.title("Smart Recommendations - Streamlit")
+st.set_page_config(page_title="Smart Recommendations - Streamlit (Random Forest)", layout="wide")
+st.title("Smart Recommendations - Streamlit (Random Forest)")
 st.caption("Auto-loads local dataset and shows results immediately.")
 
 # Optional: list files to confirm dataset is present
@@ -32,7 +31,6 @@ DATA_CSV  = "online_shoppers_intention.csv"
 @st.cache_data
 def load_dataset():
     if os.path.exists(DATA_XLSX):
-        # Explicit engine ensures Streamlit Cloud uses openpyxl
         df = pd.read_excel(DATA_XLSX, engine="openpyxl")
         return df, DATA_XLSX
     elif os.path.exists(DATA_CSV):
@@ -53,7 +51,7 @@ st.dataframe(df.head())
 target_col = "Revenue" if "Revenue" in df.columns else st.text_input("Target column name", value="Revenue")
 test_size = 0.2
 random_state = 42
-scale_choice = "StandardScaler"
+scale_choice = "StandardScaler"   # or "MinMaxScaler" or "None"
 n_clusters = 4
 
 # -------- Preprocess --------
@@ -80,7 +78,7 @@ def build_kmeans_matrix(X_in, cat_cols_in, num_cols_in):
         X_km_mat = X_in[num_cols_in].copy()
     return X_km_mat
 
-# Label-encode categoricals for supervised models
+# Label-encode categoricals for supervised model
 X_enc = X.copy()
 label_maps = {}
 for c in cat_cols:
@@ -171,84 +169,45 @@ if "Revenue" in df.columns:
 else:
     st.info("Column 'Revenue' not found, so revenue graphs are skipped. Set the correct target column name above if needed.")
 
-# -------- Models --------
-st.subheader("Modeling & Evaluation")
+# -------- Random Forest Only --------
+st.subheader("Modeling & Evaluation (Random Forest)")
 X_train, X_test, y_train, y_test = train_test_split(
     X_enc, y, test_size=float(test_size), random_state=int(random_state),
     stratify=y if y.nunique() <= 10 else None
 )
 
-results = {}
-
-# Logistic Regression
-lr = LogisticRegression(max_iter=200)
-lr.fit(X_train, y_train)
-y_pred = lr.predict(X_test)
-results["Logistic Regression"] = {
-    "accuracy": accuracy_score(y_test, y_pred),
-    "precision": precision_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
-    "recall": recall_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
-    "f1": f1_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
-    "cm": confusion_matrix(y_test, y_pred),
-    "report": classification_report(y_test, y_pred, zero_division=0, output_dict=False),
-}
-
-# Random Forest
 rf = RandomForestClassifier(n_estimators=200, random_state=int(random_state))
 rf.fit(X_train, y_train)
 y_pred = rf.predict(X_test)
-results["Random Forest"] = {
-    "accuracy": accuracy_score(y_test, y_pred),
-    "precision": precision_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
-    "recall": recall_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
-    "f1": f1_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
-    "cm": confusion_matrix(y_test, y_pred),
-    "report": classification_report(y_test, y_pred, zero_division=0, output_dict=False),
-}
 
-# Gradient Boosting
-gb = GradientBoostingClassifier(random_state=int(random_state))
-gb.fit(X_train, y_train)
-y_pred = gb.predict(X_test)
-results["Gradient Boosting"] = {
-    "accuracy": accuracy_score(y_test, y_pred),
-    "precision": precision_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
-    "recall": recall_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
-    "f1": f1_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro"),
-    "cm": confusion_matrix(y_test, y_pred),
-    "report": classification_report(y_test, y_pred, zero_division=0, output_dict=False),
-}
+acc = accuracy_score(y_test, y_pred)
+prec = precision_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro")
+rec = recall_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro")
+f1 = f1_score(y_test, y_pred, zero_division=0, average="binary" if y.nunique()==2 else "macro")
+cm = confusion_matrix(y_test, y_pred)
+report_text = classification_report(y_test, y_pred, zero_division=0)
 
-# Summary table and accuracy bar
-st.subheader("Accuracy Results")
-summary_df = pd.DataFrame(
-    [[k, v["accuracy"], v["precision"], v["recall"], v["f1"]] for k, v in results.items()],
-    columns=["Model", "Accuracy", "Precision", "Recall", "F1"]
+# Metrics table
+st.markdown("**Metrics**")
+metrics_df = pd.DataFrame(
+    [{"Model": "Random Forest", "Accuracy": acc, "Precision": prec, "Recall": rec, "F1": f1}]
 )
-st.dataframe(summary_df.style.format({"Accuracy": "{:.3f}", "Precision": "{:.3f}", "Recall": "{:.3f}", "F1": "{:.3f}"}))
+st.dataframe(metrics_df.style.format({"Accuracy": "{:.3f}", "Precision": "{:.3f}", "Recall": "{:.3f}", "F1": "{:.3f}"}))
 
-fig2, ax2 = plt.subplots()
-ax2.bar(summary_df["Model"], summary_df["Accuracy"])
-ax2.set_ylim(0, 1)
-ax2.set_ylabel("Accuracy")
-ax2.set_title("Model Accuracy Comparison")
-st.pyplot(fig2)
+# Confusion matrix
+st.markdown("**Confusion Matrix (Random Forest)**")
+fig_cm, ax_cm = plt.subplots()
+ax_cm.imshow(cm, interpolation="nearest")
+ax_cm.set_xlabel("Predicted"); ax_cm.set_ylabel("True")
+for (i, j), v in np.ndenumerate(cm):
+    ax_cm.text(j, i, str(v), ha="center", va="center")
+st.pyplot(fig_cm)
 
-# Confusion matrices
-st.markdown("**Confusion Matrices**")
-cols = st.columns(len(results))
-for (name, r), col in zip(results.items(), cols):
-    with col:
-        cm = r["cm"]
-        fig_cm, ax_cm = plt.subplots()
-        ax_cm.imshow(cm, interpolation="nearest")
-        ax_cm.set_title(name)
-        ax_cm.set_xlabel("Predicted")
-        ax_cm.set_ylabel("True")
-        for (i, j), v in np.ndenumerate(cm):
-            ax_cm.text(j, i, str(v), ha="center", va="center")
-        st.pyplot(fig_cm)
+# Classification report text
+st.markdown("**Classification Report (Random Forest)**")
+st.text(report_text)
 
 # Export clustered data
 csv = df_clusters.to_csv(index=False).encode("utf-8")
 st.download_button("Download clustered data as CSV", csv, file_name="clustered_data.csv", mime="text/csv")
+
